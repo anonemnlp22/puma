@@ -48,36 +48,6 @@ def log_metrics(metrics, best=False, test=False):
             continue
         print("%s: %.4f" % (k, v))
 
-retriever_in_context_template1 = """
- Read the following documents and answer the question.
- Document: Lars Kristinus Larsen is a Danish businessman, owner and founder of the Jysk retail chain.
- Document: Jysk is a Danish retail chain, selling household goods such as mattresses, furniture and interior décor.
- Question: What does the retail chain founded by Lars Larsen sell?
- Read the following documents and answer the question.
- Document: Michael John Moorcock (born 18 December 1939) is an English writer, primarily of science fiction and fantasy, who has also published literary novels.
- He is best known for his novels about the character Elric of Melniboné, a seminal influence on the field of fantasy in the 1960s and 1970s.
- Document: Elizabeth Jane Howard, CBE, FRSL (26 March 1923 – 2 January 2014), was an English novelist.
- She had previously been an actress and a model.
- Question: Is Elizabeth Jane Howard and Michael Moorcock both English writers or novelist?
- Read the following documents and answer the question.
- Document: <P> Question:
-""".strip().replace("\n", "").replace("\t", "")
-retriever_in_context_template1 = " ".join(retriever_in_context_template1.split())
-
-retriever_in_context_template2 = """
-Read the following documents and answer the question.
- Document: Frank Vernon Ramsey is an American former professional basketball player and coach.
- Ramsey was also a head coach for the Kentucky Colonels of the ABA during the 1970–1971 season.
- Question: which team was Ramsey a head coach for during the 1970–1971 season?
- Read the following documents and answer the question.
- Document: Jysk is a Danish retail chain, selling household goods such as mattresses and interior décor.
- Question: What does Jysk retail chain sell?
-Read the following documents and answer the question.
- Document: <P> Question:
-""".strip().replace("\n", "").replace("\t", "")
-retriever_in_context_template2 = " ".join(
-    retriever_in_context_template2.split())
-
 
 prompt_templates_for_ensembling = [
     'Document: <P> Review previous documents and ask some question. Question:',
@@ -85,11 +55,6 @@ prompt_templates_for_ensembling = [
     'Document: <P> Read the previous documents and write the following question. Question:',
     'Document: <P> Search previous documents and ask the question. Question:',
     'To analyze the documents and ask question. Document: <P> Question:',
-    #'Document: <P> To read the previous documents and write a question. Question:',
-    #'Document: <P> Read previous documents and write your exam question. Question:',
-    #'Document: <P> Read the previous documents and ask this question. Question:',
-    #'Read two documents and answer a question. Document: <P> Question:',
-    #'Identify all documents and ask question. Document: <P> Question:'
 ]
 
 if __name__ == "__main__":
@@ -319,278 +284,21 @@ if __name__ == "__main__":
             val_data = convert_nq_to_hotpot(val_data)
 
     print("-- For evaluation, using {} examples".format(args.n_eval_examples))
+    #start_time = time.time()
+    print("******* Zero-shot retrieval *******")
+    metrics_docs = threaded_eval(args, model,
+    val_data,
+    tokenizer,
+    tfidf_retriever=tfidf_retriever,
+    n_threads=args.n_workers)
 
-    if args.n_train_examples == 0:
-        #start_time = time.time()
-        print("******* Zero-shot retrieval *******")
-        metrics_docs = threaded_eval(args, model,
-        val_data,
-        tokenizer,
-        tfidf_retriever=tfidf_retriever,
-        n_threads=args.n_workers)
+    log_metrics(metrics_docs, best=True)
 
-        log_metrics(metrics_docs, best=True)
+    if args.save_retrieved_path:
+        with open(args.save_retrieved_path, "w") as f:
+            json.dump(metrics_docs, f)
 
-        if args.save_retrieved_path:
-            with open(args.save_retrieved_path, "w") as f:
-                json.dump(metrics_docs, f)
+        with open(args.save_retrieved_path[:-5] + ".args", "w") as f:
+            json.dump(vars(args), f)
 
-            with open(args.save_retrieved_path[:-5] + ".args", "w") as f:
-                json.dump(vars(args), f)
-
-        sys.exit()
-
-    ## fine-tuning the model on the training data
-    print("\n\n-- Fine-tuning the model on the training data...")
-
-    json_train_data = json.load(open(args.train_data))
-
-    if args.n_train_examples is not None:
-        if args.rand_train_data:
-            print("randomly sampling {} examples".format(
-                args.n_train_examples))
-            json_train_data = np.random.choice(json_train_data,
-                                         args.n_train_examples,
-                                         replace=False)
-        else:
-            json_train_data = json_train_data[:args.
-                                  n_train_examples]  # take the first n_examples
-
-    if args.eval_mode == "nq":
-        # convert to hotpot format
-        json_train_data = convert_nq_to_hotpot(json_train_data)
-
-    ## loading training data
-    processed_train_data = process_data(args,
-                                        json_train_data,
-                                        tokenizer,
-                                        retriever=tfidf_retriever)
-
-    print("-- For training: we have {} positive and negative examples".format(
-        len(processed_train_data)))
-
-    ## focus on positive examples only for now --
-    train_dataset = PromptRetrievalDataset(processed_train_data,
-                                           tokenizer=tokenizer,
-                                           max_prompt_len= args.max_prompt_len,)
-
-    train_dataloader = DataLoader(train_dataset,
-                                  batch_size=args.batch_size,
-                                  shuffle=True)
-
-    ## optimizer and scheduler
-    no_decay = ["bias", "LayerNorm.weight"]
-    optimizer_grouped_parameters = [
-        {
-            "params": [
-                p for n, p in model.named_parameters()
-                if not any(nd in n for nd in no_decay)
-            ],
-            "weight_decay":
-            args.weight_decay,
-        },
-        {
-            "params": [
-                p for n, p in model.named_parameters()
-                if any(nd in n for nd in no_decay)
-            ],
-            "weight_decay":
-            args.weight_decay,
-        },
-    ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.lr, eps=1e-8)
-
-    total_steps = len(train_dataloader) * args.epochs
-    scheduler = get_linear_schedule_with_warmup(optimizer, int(total_steps * args.warmup_ratio), total_steps)
-
-    #metrics = threaded_eval(args, model,
-    #                val_data,
-    #                tokenizer,
-    #                tfidf_retriever=tfidf_retriever,
-    #                n_threads=args.n_workers,)
-    if args.last_layer_only:
-        for n, p in model.named_parameters():
-            if 'base' in args.model and '9' not in n and '10' not in n and '11' not in n and 'lm' not in n and 'final' not in n:
-                p.requires_grad = False
-
-            elif 'large' in args.model and '22' not in n and '23' not in n and 'lm' not in n and 'final' not in n:
-                p.requires_grad = False
-
-            elif 'xl' in args.model and '22' not in n and '23' not in n and 'lm' not in n and 'final' not in n:
-                p.requires_grad = False
-
-
-    logger.info("***** Running Retriever training *****")
-    best_metric_value_so_far = 0
-    best_all_metrics = {}
-
-    for epoch in range(1, args.epochs + 1):
-        epoch_loss = 0
-        model.train()
-        cur_step = 0
-
-        for step, batch in tqdm(enumerate(train_dataloader)):
-            pos_input_ids = batch["pos_input_ids"].to(model.device)
-            pos_attn_masks = batch["pos_attn_masks"].to(model.device)
-
-            neg_input_ids = torch.cat([t.unsqueeze(1).to(model.device) for t in batch["neg_input_ids"]], dim=1) # (B, NNEG, L)
-            neg_attn_masks = torch.cat([t.unsqueeze(1).to(model.device) for t in batch["neg_attn_masks"]], dim=1) # (B, NNEG, L)
-
-            question_input_ids = batch["question_input_ids"].to(model.device)
-
-            B, T = pos_input_ids.shape
-            nneg, _  = neg_input_ids.shape[1:]
-
-            labels = question_input_ids
-            labels[labels == tokenizer.pad_token_id] = -100
-
-
-            pos_out = model(pos_input_ids,
-                            attention_mask=pos_attn_masks,
-                            labels=labels)
-
-            pos_logits = pos_out.logits
-            pos_loss = pos_out.loss
-
-            if not args.contrastive_loss: # MLE loss
-                loss = pos_loss
-                epoch_loss += loss.item()
-
-            else:
-                ## flatten
-                neg_input_ids = neg_input_ids.view(-1, neg_input_ids.shape[-1])
-                neg_attn_masks = neg_attn_masks.view(-1, neg_attn_masks.shape[-1])
-
-                neg_logits = []
-                shift = True if "gpt" in model.config._name_or_path else False
-
-                neg_loss = 0
-
-                for i in range(0, neg_input_ids.shape[0], args.batch_size):
-                    neg_out = model(neg_input_ids[i:i+args.batch_size],
-                                        attention_mask=neg_attn_masks[i:i+args.batch_size],
-                                        labels=labels)
-
-                    neg_loss += -neg_out.loss
-                    neg_logits.append(neg_out.logits)
-
-                neg_logits = torch.cat(neg_logits, dim=0)
-                ## obtaining scores for negative examples
-
-                ## repeat labels nneg times
-                labels_rep = labels.repeat(nneg, 1)
-                neg_log_probs = batch_get_logprob_from_logits(neg_logits, labels_rep, shift=shift)
-                neg_log_probs = neg_log_probs.view(B, nneg) # (B, NNEG)
-
-                ## obtaining scores for positive examples
-                pos_log_probs = batch_get_logprob_from_logits(pos_logits, labels, shift=shift)
-                pos_loss = -pos_log_probs.mean()
-
-                if args.contrastive_loss_type == "ce":
-                    temp = 1.0
-                    log_probs = torch.cat([pos_log_probs.unsqueeze(1) / temp , neg_log_probs / temp], dim=1).to(model.device) # (B, NNEG+1)
-                    ce_labels = torch.zeros(log_probs.shape[0], dtype=torch.long).to(model.device)
-                    loss_fct = torch.nn.CrossEntropyLoss()
-                    loss =  loss_fct(log_probs, ce_labels) #  48.00
-                elif args.contrastive_loss_type == "ul":
-                    loss = pos_loss - torch.log(1 - torch.exp(neg_loss)) # 49.40
-
-                epoch_loss += loss.item()
-
-            loss.backward()
-
-            if cur_step % args.gradient_accumulation_steps == 0:
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-
-            cur_step += 1
-
-        print("Finished epoch {}: \n\t\t loss: {}".format(
-            epoch, epoch_loss / cur_step))
-
-        # evaluate model on validation data
-        if not args.train_only:
-            if epoch % args.eval_every == 0:
-                print(" -- Evaluating on validation data...")
-                metrics = threaded_eval(args, model,
-                    val_data,
-                    tokenizer,
-                    tfidf_retriever=tfidf_retriever,
-                    n_threads=args.n_workers,)
-
-                retrieved_docs = metrics["questions_docs"]
-                del metrics["questions_docs"]
-
-                log_metrics(metrics)
-                best_metric = "REC_AT_2"
-                best_metric_value = metrics[best_metric]
-
-                if best_metric_value > best_metric_value_so_far:
-                    print("-- Obtained better {}: {}".format(
-                        best_metric, best_metric_value))
-
-                    best_metric_value_so_far = best_metric_value
-                    best_all_metrics = metrics
-
-                    if args.outdir:
-                        # save model
-                        path = args.outdir
-                        os.makedirs(path, exist_ok=True)
-                        torch.save({'model_state_dict': model.state_dict()},
-                                os.path.join(path, 'model.pt'))
-                        ## save metrics
-                        with open(os.path.join(path, 'metrics.json'), 'w+') as f:
-                            json.dump(best_all_metrics, f)
-
-                        ## save retrieved docs
-                        with open(os.path.join(path, 'val_retrieved_docs.json'), 'w+') as f:
-                            json.dump(retrieved_docs, f)
-
-                        ## save args
-                        with open(os.path.join(path, 'args.json'), 'w+') as f:
-                            json.dump(vars(args), f)
-
-                        ## save prompt template
-                        with open(os.path.join(path, 'prompt_template.txt'), 'w+') as f:
-                            f.write(prompt_template)
-
-        else:
-            print("-- Skipping evaluation on validation data")
-            if args.outdir:
-                # save model
-                path = os.path.join(
-                    args.outdir,
-                    '{}_{}ex_{}'.format(args.model, args.n_train_examples,
-                                        prompt_template.replace(" ", "_")))
-
-                os.makedirs(path, exist_ok=True)
-                torch.save({'model_state_dict': model.state_dict()},
-                           os.path.join(path, 'model.pt'))
-
-    print("Finished training retriever!")
-    log_metrics(best_all_metrics, best=True)
-
-    ## Loading the best model
-    if args.outdir and args.test_data:
-        print("Loading the best model and evaluating on test set")
-        ckpt = torch.load(os.path.join(path, 'model.pt'))
-        model.load_state_dict(ckpt["model_state_dict"])
-
-        # evaluating on test set
-        with open(args.test_data, "r") as f:
-            test_data = json.load(f)
-
-        print(" -- Evaluating on test set...")
-        setattr(args, 'n_eval_examples', None)
-        metrics = threaded_eval(args, model,
-        test_data,
-        tokenizer,
-        tfidf_retriever=tfidf_retriever,
-        n_threads=args.n_workers)
-
-        ## saving the metrics
-        with open(os.path.join(path, 'eval_metrics.json'), 'w+') as f:
-            json.dump(metrics, f)
-
-        log_metrics(metrics, test=True)
+    sys.exit()

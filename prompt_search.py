@@ -51,37 +51,6 @@ def log_metrics(metrics, best=False, test=False):
         print("%s: %.4f" % (k, v))
 
 
-retriever_in_context_template1 = """
- Read the following documents and answer the question.
- Document: Lars Kristinus Larsen is a Danish businessman, owner and founder of the Jysk retail chain.
- Document: Jysk is a Danish retail chain, selling household goods such as mattresses, furniture and interior décor.
- Question: What does the retail chain founded by Lars Larsen sell?
- Read the following documents and answer the question.
- Document: Michael John Moorcock (born 18 December 1939) is an English writer, primarily of science fiction and fantasy, who has also published literary novels.
- He is best known for his novels about the character Elric of Melniboné, a seminal influence on the field of fantasy in the 1960s and 1970s.
- Document: Elizabeth Jane Howard, CBE, FRSL (26 March 1923 – 2 January 2014), was an English novelist.
- She had previously been an actress and a model.
- Question: Is Elizabeth Jane Howard and Michael Moorcock both English writers or novelist?
- Read the following documents and answer the question.
- Document: <P> Question:
-""".strip().replace("\n", "").replace("\t", "")
-retriever_in_context_template1 = " ".join(
-    retriever_in_context_template1.split())
-
-retriever_in_context_template2 = """
-Read the following documents and answer the question.
- Document: Frank Vernon Ramsey is an American former professional basketball player and coach.
- Ramsey was also a head coach for the Kentucky Colonels of the ABA during the 1970–1971 season.
- Question: which team was Ramsey a head coach for during the 1970–1971 season?
- Read the following documents and answer the question.
- Document: Jysk is a Danish retail chain, selling household goods such as mattresses and interior décor.
- Question: What does Jysk retail chain sell?
-Read the following documents and answer the question.
- Document: <P> Question:
-""".strip().replace("\n", "").replace("\t", "")
-retriever_in_context_template2 = " ".join(
-    retriever_in_context_template2.split())
-
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--model", type=str, default="google/t5-large-lm-adapt")

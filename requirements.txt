@@ -1,0 +1,4 @@
+nltk 
+transformers==4.14.1
+jsonlines
+
